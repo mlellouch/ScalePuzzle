@@ -9,7 +9,6 @@ import torch.optim as optim
 from tqdm import tqdm
 
 
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -22,7 +21,7 @@ def get_resnet(num_classes=5):
     return resnet
 
 
-class Trainer:
+class PairMatcher:
 
     def load_model(self):
         model_path = self.model_log_path / Path('model.pt')
@@ -37,6 +36,7 @@ class Trainer:
         self.net = get_resnet(num_classes=num_classes)
         self.model_log_path = model_log_path
         self.model_log_path.mkdir(exist_ok=True, parents=True)
+        self.load_model()
         self.criterion = None
         self.optimizer = None
 
@@ -99,7 +99,6 @@ class Trainer:
         return train_dataloader, test_dataloader
 
     def train(self, epochs: int):
-        self.load_model()
         self.setup_training()
         train_dataloader, test_dataloader = self.get_data()
 
@@ -118,8 +117,14 @@ class Trainer:
 
         self.save_model()
 
+    def infer(self, tiled_image: torch.Tensor):
+        with torch.no_grad():
+            net_output = self.net(tiled_image)
+            return torch.nn.functional.softmax(net_output, dim=1)
+
+
 if __name__ == '__main__':
-    Trainer(model_log_path=Path('./models/first_test')).train(epochs=100)
+    PairMatcher(model_log_path=Path('./models/first_test')).train(epochs=300)
 
 
 
