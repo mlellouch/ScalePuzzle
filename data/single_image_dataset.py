@@ -17,19 +17,14 @@ class ImagePatchesDataset:
             for x in range(0, entire_image.shape[1] // self.patch_size):
                 new_piece = entire_image[y * self.patch_size:(y * self.patch_size) + self.patch_size,
                                    x * self.patch_size:(x * self.patch_size) + self.patch_size]
-                pieces.append(self.transforms(new_piece))
+                pieces.append(new_piece)
 
-        self.pieces = torch.stack(pieces, dim=0)
-
+        self.pieces = pieces
 
     def __init__(self, image_path: Path, patch_size=32):
-        self.patch_size =patch_size
+        self.patch_size = patch_size
         self.image_path = image_path
         self.pieces = None
-        self.transforms = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ])
         self.load_pieces()
 
     def __len__(self):
