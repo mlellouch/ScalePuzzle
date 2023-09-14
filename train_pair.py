@@ -34,6 +34,7 @@ class PairMatcher:
 
     def __init__(self, model_log_path: Path, num_classes=5):
         self.net = get_resnet(num_classes=num_classes)
+        self.net = self.net.to(device=device)
         self.model_log_path = model_log_path
         self.model_log_path.mkdir(exist_ok=True, parents=True)
         self.load_model()
@@ -65,11 +66,13 @@ class PairMatcher:
         with torch.no_grad():
             for data in test_dataloader:
                 inputs, labels = data
+                inputs = inputs.to(device=device)
+                labels = labels.to(device=device)
                 inputs = inputs.view([-1] + list(inputs.shape[2:]))
                 labels = labels.flatten()
 
-                outputs = self.net(inputs.to(device=device))
-                loss = self.criterion(outputs, labels.to(device=device))
+                outputs = self.net(inputs)
+                loss = self.criterion(outputs, labels)
                 loss_sum += loss.item()
 
                 _, predicted = torch.max(outputs.data, 1)
