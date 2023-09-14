@@ -70,8 +70,11 @@ class ScaleValidator:
                 inputs = inputs.view([-1] + list(inputs.shape[2:]))
                 labels = labels.flatten()
 
-                outputs = self.net(inputs.to(device=device))
-                loss = self.criterion(outputs, labels.to(device=device))
+                inputs = inputs.to(device=device)
+                labels = labels.to(device=device)
+
+                outputs = self.net(inputs)
+                loss = self.criterion(outputs, labels)
                 loss_sum += loss.item()
 
                 _, predicted = torch.max(outputs.data, 1)
