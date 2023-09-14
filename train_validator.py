@@ -12,7 +12,7 @@ from tqdm import tqdm
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def get_resnet(num_classes=1):
+def get_resnet(num_classes=2):
     resnet = torchvision.models.resnet34(weights=torchvision.models.ResNet34_Weights.IMAGENET1K_V1)
 
     # Substitute the FC output layer
@@ -34,7 +34,7 @@ class ScaleValidator:
     def save_model(self):
         torch.save(self.net.state_dict(), self.model_log_path / Path('model.pt'))
 
-    def __init__(self, model_log_path: Path, num_classes=1):
+    def __init__(self, model_log_path: Path, num_classes=2):
         self.net = get_resnet(num_classes=num_classes)
         self.model_log_path = model_log_path
         self.model_log_path.mkdir(exist_ok=True, parents=True)
@@ -81,7 +81,7 @@ class ScaleValidator:
         return loss_sum / len(test_dataloader), correct / total
 
     def setup_training(self):
-        self.criterion = nn.BCELoss()
+        self.criterion = nn.CrossEntropyLoss()
         self.optimizer = optim.SGD(self.net.parameters(), lr=0.001, momentum=0.9)
 
     def get_data(self):
