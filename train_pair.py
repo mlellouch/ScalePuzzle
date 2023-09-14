@@ -26,8 +26,10 @@ class PairMatcher:
     def load_model(self):
         model_path = self.model_log_path / Path('model.pt')
         if model_path.exists():
-            self.net.load_state_dict(torch.load(model_path))
+            self.net.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
             self.net.eval()
+
+        self.net.to(device=device)
 
     def save_model(self):
         torch.save(self.net.state_dict(), self.model_log_path / Path('model.pt'))
