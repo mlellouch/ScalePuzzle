@@ -3,7 +3,7 @@ import torchvision
 from pathlib import Path
 from torch.utils.data import DataLoader
 import csv
-from data.tiled_pair_dataset import TiledPairDataset
+from data.scale_dataset import ScaleDataset
 import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
@@ -34,7 +34,7 @@ class ScaleValidator:
     def save_model(self):
         torch.save(self.net.state_dict(), self.model_log_path / Path('model.pt'))
 
-    def __init__(self, model_log_path: Path, num_classes=5):
+    def __init__(self, model_log_path: Path, num_classes=1):
         self.net = get_resnet(num_classes=num_classes)
         self.model_log_path = model_log_path
         self.model_log_path.mkdir(exist_ok=True, parents=True)
@@ -86,13 +86,13 @@ class ScaleValidator:
 
     def get_data(self):
         train_dataloader = DataLoader(
-            TiledPairDataset(Path('./data/images/train')),
+            ScaleDataset(Path('./data/images/train')),
             batch_size=4,
             shuffle=True
         )
 
         test_dataloader = DataLoader(
-            TiledPairDataset(Path('./data/images/test')),
+            ScaleDataset(Path('./data/images/test')),
             batch_size=4,
             shuffle=True
         )
