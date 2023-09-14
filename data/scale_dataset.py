@@ -52,7 +52,8 @@ class ScaleDataset(Dataset):
         second_combined = np.where(~full_patches, first_correct, second_correct)
 
         labels = [0, 0, 1, 1]
-        return np.stack([first_correct, second_correct, first_combined, second_combined], axis=0), labels
+        return torch.stack([self.transforms(img) for img in [first_correct, second_correct, first_combined, second_combined]]), \
+               torch.tensor(labels, dtype=torch.long)
 
 if __name__ == '__main__':
     d = ScaleDataset(images_path=Path('./images/train'))
