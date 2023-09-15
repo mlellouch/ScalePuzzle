@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torchvision
 from pathlib import Path
@@ -124,7 +125,7 @@ class ScaleValidator:
     def infer(self, tiled_image: torch.Tensor):
         with torch.no_grad():
             net_output = self.net(tiled_image)
-            return torch.nn.functional.softmax(net_output, dim=1)
+            return torch.nn.functional.softmax(net_output, dim=1)[0]
 
 
 if __name__ == '__main__':

@@ -15,6 +15,7 @@ from torch.utils.data import DataLoader
 import cv2
 from scipy.signal import convolve2d, correlate2d
 import operator
+import parse
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -121,12 +122,13 @@ class Solver:
         return [JoinedPieces(piece_index=np.array([[0,0,0],[0, idx+1, 0], [0,0,0]], dtype=int), piece_id=idx, number_of_pieces=1) for idx in range(len(self.patches_data))]
 
     def calculate_pair_ratings(self):
-        # check if exists in cache
+
         cache_dir = Path('./cache')
-        cache_dir.mkdir(exist_ok=True, parents=True)
-        file_name = cache_dir / Path(f'{self.image.parts[-1].replace(".jpg", ".npy").replace(".png", ".npy")}')
-        if file_name.exists():
-            return np.load(str(file_name))
+        dir_file_name = cache_dir / Path(f'{self.image.parts[-1].replace(".jpg", "").replace(".png", "")}')
+        dir_file_name.mkdir(exist_ok=True, parents=True)
+        pairs_file = dir_file_name / Path('pairs.npy')
+        if pairs_file.exists():
+            return np.load(str(pairs_file))
 
         d = tiled_pair_dataset.SingleImageDataset(self.image)
         loader = DataLoader(d, batch_size=16)
@@ -140,7 +142,7 @@ class Solver:
             for center_idx, tile_idx, ratings in zip(center_index, tiled_index, current_pair_ratings):
                 pair_ratings[center_idx, tile_idx, :] = ratings
 
-        np.save(file_name, pair_ratings)
+        np.save(str(pairs_file), pair_ratings)
         return pair_ratings
 
     def __init__(self, pair_matcher: PairMatcher, scale_validator: ScaleValidator, image: Path):
@@ -154,6 +156,7 @@ class Solver:
 
         self.patches_data = single_image_dataset.ImagePatchesDataset(image_path=image)
         self.pair_ratings = None
+        self.pieces = self.init_pieces()
 
     @staticmethod
     def crop_piece_mask(piece_mask):
@@ -203,15 +206,30 @@ class Solver:
 
         return max_rating, max_piece
 
+    def should_join_pieces_optimal_ver2(self, p1, p2):
+        max_rating = 0.0
+        max_piece = None
+        for new_piece in p1.get_all_possible_joins(p2):
+            current_rating = self.rate_join_ver2(new_piece)
+            if current_rating > max_rating:
+                max_rating = current_rating
+                piece_mask, boolean_mask, number_of_pairs = new_piece
+                new_piece_mask = self.crop_piece_mask(piece_mask=piece_mask)
+                new_final_piece = JoinedPieces(new_piece_mask, piece_id=min(p1.piece_id, p2.piece_id),number_of_pieces=p1.number_of_pieces + p2.number_of_pieces)
+                max_piece = new_final_piece
+
+        return max_rating, max_piece
+
     def solve_puzzle_greedy(self, animation_file='test.mp4'):
         self.pair_ratings = self.calculate_pair_ratings()
-        pieces = self.init_pieces()
-        random.shuffle(pieces) # truly test our algo
+        random.shuffle(self.pieces) # truly test our algo
 
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(animation_file, fourcc, 1.0, (1024, 1024))
 
         progress_bar = tqdm(desc='solving puzzle', total=len(self.init_pieces()))
+        self.load_state()
+        pieces = self.pieces
         while len(pieces) > 1:
             join_occured = False
             for i in range(len(pieces)):
@@ -243,16 +261,17 @@ class Solver:
 
         out.release()
         progress_bar.close()
+        self.save_state()
         print(pieces[0].piece_mask)
 
     def solve_puzzle_optimal(self, animation_file='test_optimal.mp4'):
         self.pair_ratings = self.calculate_pair_ratings()
-        pieces = self.init_pieces()
-        random.shuffle(pieces)  # truly test our algo
+        random.shuffle(self.pieces)  # truly test our algo
 
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(animation_file, fourcc, 1.0, (1024, 1024))
 
+        pieces = self.pieces
         progress_bar = tqdm(desc='solving puzzle', total=len(self.init_pieces()))
         while len(pieces) > 1:
             max_rating = 0
@@ -274,27 +293,70 @@ class Solver:
 
         out.release()
         progress_bar.close()
+
+        print(pieces[0].piece_mask)
+
+
+    def solve_puzzle_optimal_ver2(self, animation_file='test_optimal_ver2.mp4'):
+        self.pair_ratings = self.calculate_pair_ratings()
+        random.shuffle(self.pieces)  # truly test our algo
+
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(animation_file, fourcc, 1.0, (1024, 1024))
+
+        pieces = self.pieces
+        progress_bar = tqdm(desc='solving puzzle', total=len(self.init_pieces()))
+        while len(pieces) > 1:
+            max_rating = 0
+            best_pair = (0, 1)
+            for i in range(len(pieces)):
+                for j in range(i + 1, len(pieces)):
+                    rating, new_piece = self.should_join_pieces_optimal_ver2(pieces[i], pieces[j])
+                    if rating > max_rating:
+                        max_rating = rating
+                        best_pair = (i,j)
+
+            rating, new_piece = self.should_join_pieces_optimal_ver2(pieces[best_pair[0]], pieces[best_pair[1]])
+            pieces.pop(best_pair[1])
+            pieces.pop(best_pair[0])
+            pieces.append(new_piece)
+            progress_bar.update(1)
+            out.write(cv2.cvtColor(self.get_animation_frame(pieces, 1024, number_of_pieces=5), cv2.COLOR_BGR2RGB))
+
+
+        out.release()
+        progress_bar.close()
+
         print(pieces[0].piece_mask)
 
     def _get_average_pair_ratings(self, new_piece_mask, new_boolean_mask):
         all_ratings = []
         first_piece_locations = np.argwhere(new_boolean_mask == 1)
+        number_of_connected_pieces = 0
         for y,x in first_piece_locations:
             # since piece masks are starting from 1, subtract 1 to each
+            is_piece_connected = False
             if new_boolean_mask[y-1, x] == 2:
+                is_piece_connected = True
                 all_ratings.append(self.pair_ratings[new_piece_mask[y,x] - 1, new_piece_mask[y-1, x] - 1, 3])
             if new_boolean_mask[y+1, x] == 2:
+                is_piece_connected = True
                 all_ratings.append(self.pair_ratings[new_piece_mask[y,x] - 1, new_piece_mask[y+1, x] - 1, 4])
             if new_boolean_mask[y, x-1] == 2:
+                is_piece_connected = True
                 all_ratings.append(self.pair_ratings[new_piece_mask[y,x] - 1, new_piece_mask[y, x-1] - 1, 1])
             if new_boolean_mask[y, x+1] == 2:
+                is_piece_connected = True
                 all_ratings.append(self.pair_ratings[new_piece_mask[y,x] - 1, new_piece_mask[y, x+1] - 1, 2])
 
-        return sum(all_ratings) / len(all_ratings), len(all_ratings)
+            if is_piece_connected:
+                number_of_connected_pieces += 1
+
+        return sum(all_ratings) / len(all_ratings), len(all_ratings), number_of_connected_pieces
 
     def rate_join(self, new_piece):
         piece_mask, boolean_mask, number_of_pairs = new_piece
-        average_pair_rating, number_of_pairs = self._get_average_pair_ratings(new_piece_mask=piece_mask, new_boolean_mask=boolean_mask)
+        average_pair_rating, number_of_pairs, number_of_connected_pieces = self._get_average_pair_ratings(new_piece_mask=piece_mask, new_boolean_mask=boolean_mask)
 
         # first method, ignores scale validator
         # using a sigmoind-esque functon, s.t. f(1) = 1, and converges to ~ 1.3, so multiply it by some scale
@@ -302,6 +364,18 @@ class Solver:
 
         scale = 1.5
         value = ((1 / (1 + (np.e ** -number_of_pairs))) * (1 + (np.e ** -1))) ** scale
+        return average_pair_rating * value
+
+    def rate_join_ver2(self, new_piece):
+        piece_mask, boolean_mask, number_of_pairs = new_piece
+        average_pair_rating, number_of_pairs, number_of_connected_pieces = self._get_average_pair_ratings(new_piece_mask=piece_mask, new_boolean_mask=boolean_mask)
+
+        # first method, ignores scale validator
+        # using a sigmoind-esque functon, s.t. f(1) = 1, and converges to ~ 1.3, so multiply it by some scale
+        # this function is used by the number of pairs
+
+        scale = 1.5
+        value = (number_of_pairs / number_of_connected_pieces) * ((1 / (1 + (np.e ** -number_of_pairs))) * (1 + (np.e ** -1))) ** scale
         return average_pair_rating * value
 
     def get_animation_frame(self, pieces: List[JoinedPieces], frame_size, number_of_pieces: int):
@@ -342,12 +416,109 @@ class Solver:
 
         return frame
 
+    def get_last_state(self):
+        cache_dir = Path('./cache')
+        dir_file_name = cache_dir / Path(f'{self.image.parts[-1].replace(".jpg", "").replace(".png", "")}')
+        dir_file_name.mkdir(exist_ok=True, parents=True)
+        max_state = -1
+        for file in dir_file_name.iterdir():
+            try:
+                state_number = parse.parse('{:d}.npz', file.parts[-1])[0]
+                max_state = max(max_state, state_number)
+            except:
+                continue
+        return max_state
+
+    def save_state(self):
+        # check if exists in cache
+        cache_dir = Path('./cache')
+        dir_file_name = cache_dir / Path(f'{self.image.parts[-1].replace(".jpg", "").replace(".png", "")}')
+        dir_file_name.mkdir(exist_ok=True, parents=True)
+        last_state_path = dir_file_name / Path(f'{self.get_last_state() + 1}.npz')
+        np.savez(last_state_path, [piece.piece_mask for piece in self.pieces])
+
+    def load_state(self):
+        cache_dir = Path('./cache')
+        dir_file_name = cache_dir / Path(f'{self.image.parts[-1].replace(".jpg", "").replace(".png", "")}')
+        dir_file_name.mkdir(exist_ok=True, parents=True)
+        last_state_path = dir_file_name / Path(f'{self.get_last_state()}.npz')
+        if last_state_path.exists():
+            pieces = np.load(str(last_state_path))
+
+    def get_validator_rating(self, indeces):
+        patch_size = self.patches_data.patch_size
+        image_to_test = np.zeros(shape=[indeces.shape[0] * patch_size, indeces.shape[1] * patch_size])
+        for i in range(indeces.shape[0]):
+            for j in range(indeces.shape[1]):
+                image_to_test[i * patch_size: i * patch_size + patch_size, j * patch_size: j * patch_size + patch_size] = \
+                    self.patches_data[indeces[i,j]]
+
+        self.scale_validator.infer(image_to_test)
+
+    def rate_scale(self, piece: JoinedPieces, scales=(2,3,4)):
+        # at the moment our method doesn't accept hole (this could be changed)
+        output = np.zeros_like(piece.piece_mask)
+        count = np.ones_like(piece.piece_mask, dtype=np.float32) * 1e-6
+        for scale in scales:
+            kernel = np.ones((scale, scale), dtype=np.uint8)
+            locations_that_can_be_tested = correlate2d(piece.piece_exists, kernel, mode='valid') == (scales ** 2)
+            for location in np.argwhere(locations_that_can_be_tested):
+                count[location[0], location[1]] += 1
+                output[location[0], location[1]] += self.get_validator_rating(
+                    piece.piece_mask[location[0]: location[0] + scale, location[1]: location[1] + scale]
+                )
+
+        return output / count
+
+
+    def solve_puzzle_optimal_with_scale(self, animation_file='test_optimal_scale.mp4'):
+        self.pair_ratings = self.calculate_pair_ratings()
+        self.load_state()
+        random.shuffle(self.pieces)  # truly test our algo
+
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(animation_file, fourcc, 1.0, (1024, 1024))
+        self.load_state()
+        pieces = self.pieces
+        for i in range(5):
+            progress_bar = tqdm(desc='solving puzzle', total=len(self.init_pieces()))
+
+            # puzzle solving iteration
+            while len(pieces) > 1:
+                max_rating = 0
+                best_pair = (0, 1)
+                for i in range(len(pieces)):
+                    for j in range(i + 1, len(pieces)):
+                        rating, new_piece = self.should_join_pieces_optimal(pieces[i], pieces[j])
+                        if rating > max_rating:
+                            max_rating = rating
+                            best_pair = (i,j)
+
+                rating, new_piece = self.should_join_pieces_optimal(pieces[best_pair[0]], pieces[best_pair[1]])
+                pieces.pop(best_pair[1])
+                pieces.pop(best_pair[0])
+                pieces.append(new_piece)
+                progress_bar.update(1)
+                out.write(cv2.cvtColor(self.get_animation_frame(pieces, 1024, number_of_pieces=5), cv2.COLOR_BGR2RGB))
+
+            self.save_state()
+            # puzzle breaking
+            scale_rating = self.rate_scale(pieces[0])
+            out.write(cv2.cvtColor(scale_rating, cv2.COLOR_GRAY2BGR))
+            pieces_to_break_off = scale_rating < self.scale_threshold
+            new_pieces = pieces[0].break_off(pieces_to_break_off)
+            pieces = new_pieces
+
+            progress_bar.close()
+
+        out.release()
+        print(pieces[0].piece_mask)
 
 if __name__ == '__main__':
     pair_matcher = PairMatcher(model_log_path=Path('./models/fully_trained'))
-    scale_validator = None
+    scale_validator = ScaleValidator(model_log_path=Path('./models/scale_validator'))
     image = Path('./data/images/test_large/nature.jpg')
 
     solver = Solver(pair_matcher=pair_matcher, scale_validator=scale_validator, image=image)
-    solver.solve_puzzle_optimal()
+    solver.solve_puzzle_optimal_ver2(animation_file='test_optimal_ver3.mp4')
 
