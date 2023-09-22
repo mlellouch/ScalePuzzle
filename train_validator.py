@@ -8,7 +8,8 @@ from data.scale_dataset import ScaleDataset
 import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
-
+from PIL import Image
+from torchvision import transforms
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -42,6 +43,11 @@ class ScaleValidator:
         self.load_model()
         self.criterion = None
         self.optimizer = None
+        self.transforms = transforms.Compose([
+            transforms.Resize(224),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
 
     def train_epoch(self, train_dataloader):
         self.net.train()
@@ -123,9 +129,13 @@ class ScaleValidator:
         self.save_model()
 
     def infer(self, tiled_image: torch.Tensor):
+        if type(tiled_image) == np.ndarray:
+            tiled_image = self.transforms(Image.fromarray(tiled_image)).to(device=device)
         with torch.no_grad():
+            if len(tiled_image.shape) == 3:
+                tiled_image = tiled_image[None]
             net_output = self.net(tiled_image)
-            return torch.nn.functional.softmax(net_output, dim=1)[0]
+            return torch.nn.functional.softmax(net_output, dim=1)[:,1]
 
 
 if __name__ == '__main__':
