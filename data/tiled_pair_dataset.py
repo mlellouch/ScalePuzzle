@@ -1,3 +1,5 @@
+import random
+
 import torch
 from torch.utils.data import Dataset
 from pathlib import Path
@@ -6,6 +8,7 @@ import numpy as np
 from torchvision import transforms
 from typing import List
 import matplotlib.pyplot as plt
+from scipy.signal import correlate2d
 
 
 class TiledPairDataset(Dataset):
@@ -83,6 +86,43 @@ class TiledPairDataset(Dataset):
         final_images = [self.transforms(Image.fromarray(output_image)) for output_image in outputs]
         return torch.stack(final_images), torch.tensor(labels, dtype=torch.long)
 
+class SandedPairDataset(TiledPairDataset):
+
+    def __init__(self, images_path: Path, sand_factor=0.25):
+        super().__init__(images_path, patch_size=30)
+        self.sand_factor = sand_factor
+
+
+    def find_contours(self, mask_image):
+        kernel = np.array([
+            [0, 0.25, 0],
+            [0.25, 0, 0.25],
+            [0, 0.25, 0]
+        ])
+
+        result = correlate2d(mask_image, kernel, mode='same', boundary='fill', fillvalue=0)
+        return np.argwhere(result < 1.0)
+
+    def sand_patch(self, full_patch):
+        starting_pixels = self.patch_size ** 2
+        mask = np.ones(shape=[self.patch_size, self.patch_size], dtype=float)
+
+        for i in range(int(self.sand_factor * starting_pixels)):
+            contours = self.find_contours(mask)
+            pixel_to_remove = random.choice(contours)
+            mask[pixel_to_remove[0], pixel_to_remove[1]] = 0
+
+        sanded_patch = full_patch.copy()
+        sanded_patch[mask == 0] = 0
+        return sanded_patch
+
+    def get_patch(self, image, patch_coords):
+        x, y = patch_coords
+        full_patch = image[y * self.patch_size: y * self.patch_size + self.patch_size,
+                       x * self.patch_size: x * self.patch_size + self.patch_size]
+
+        sanded_patch = self.sand_patch(full_patch)
+        return sanded_patch
 
 class SingleImageDataset(TiledPairDataset):
     pieces: List[np.ndarray]
@@ -112,7 +152,7 @@ class SingleImageDataset(TiledPairDataset):
 
 if __name__ == '__main__':
     # test
-    d = TiledPairDataset(images_path=Path('./images/train'))
+    d = SandedPairDataset(images_path=Path('./images/train'))
 
     while True:
         a = d[0]

@@ -107,7 +107,6 @@ class ScaleDatasetWithHoles(ScaleDataset):
                                       get_zero_mask(np.zeros_like(combined_patches, dtype=bool))
                                       ]
 
-
         full_patches = np.repeat(np.repeat(combined_patches, repeats=self.patch_size, axis=0), repeats=self.patch_size, axis=1) # multiply patches
         full_patches = np.stack([full_patches, full_patches, full_patches], axis=2)
 

@@ -107,6 +107,48 @@ class JoinedPieces:
 
         return new_pieces
 
+    def split_by_scale_rating(self, scale_rating, threshold=0.9):
+        non_zero_locations = np.stack(np.nonzero(self.piece_mask), axis=1)
+
+        indeces_to_remove = np.unique(self.piece_mask[scale_rating > threshold])
+        indeces_to_remove = indeces_to_remove[indeces_to_remove != 0]
+        new_pieces = []
+        for idx in indeces_to_remove:
+            loc = non_zero_locations[idx]
+            piece_idx = self.piece_mask[loc[0], loc[1]]
+            new_piece = JoinedPieces(
+                piece_index=np.array([[0, 0, 0], [0, piece_idx, 0], [0, 0, 0]], dtype=int), piece_id=piece_idx - 1,
+                number_of_pieces=1
+            )
+
+            new_pieces.append(new_piece)
+
+            self.number_of_pieces -= 1
+            self.piece_exists[loc[0], loc[1]] = 0
+            self.piece_mask[loc[0], loc[1]] = 0
+
+        # now check if there are unconnected elements
+        structure = np.array([
+            [0, 1, 0],
+            [1, 1, 1],
+            [0, 1, 0]
+        ])
+
+        labelled, ncomponenets = label(self.piece_exists, structure)
+        for componenet_num in range(1, ncomponenets + 1):
+            new_piece_index = self.piece_mask.copy()
+            new_piece_index[labelled != componenet_num] = 0
+            loc = np.argwhere(labelled == componenet_num)[0]
+            new_piece = JoinedPieces(
+                piece_index=crop_piece_mask(new_piece_index),
+                piece_id=new_piece_index[loc[0], loc[1]],
+                number_of_pieces=int(self.piece_exists[labelled == componenet_num].sum())
+            )
+
+            new_pieces.append(new_piece)
+
+        return new_pieces
+
 
     def get_piece_frame(self, patches_data:single_image_dataset.ImagePatchesDataset):
         patch_size = patches_data.patch_size
@@ -363,6 +405,38 @@ class Solver:
 
         progress_bar.close()
 
+    def solve_puzzle_big_pieces_first(self, out):
+        pieces = self.pieces
+        progress_bar = tqdm(desc='solving puzzle', total=len(self.init_pieces()))
+
+        random.shuffle(pieces)
+        # find biggest pieces
+        max_size = 0
+        max_index = 0
+        for idx in range(len(pieces)):
+            if pieces[idx].number_of_pieces > max_size:
+                max_size = pieces[idx].number_of_pieces
+                max_index = idx
+
+        max_piece = pieces.pop(max_index)
+
+        while len(pieces) > 0:
+            max_rating = 0
+            best_pair = 0
+            for i in range(len(pieces)):
+                rating, new_piece = self.should_join_pieces_optimal_ver2(max_piece, pieces[i])
+                if rating > max_rating:
+                    max_rating = rating
+                    best_pair = i
+
+            rating, max_piece = self.should_join_pieces_optimal_ver2(max_piece, pieces[best_pair])
+            pieces.pop(best_pair)
+            progress_bar.update(1)
+            out.write(cv2.cvtColor(self.get_animation_frame(pieces, 1024, number_of_pieces=5), cv2.COLOR_BGR2RGB))
+
+        progress_bar.close()
+        self.pieces = [max_piece]
+
 
     def solve_puzzle_optimal_ver2(self, animation_file='test_optimal_ver2.mp4'):
         self.pair_ratings = self.calculate_pair_ratings()
@@ -413,6 +487,32 @@ class Solver:
             self.pieces = self.pieces[0].random_split()
 
         out.release()
+
+    def solve_puzzle_optimal_with_scale_validation(self, animation_file='test_optinal_with_scale_validation'):
+        self.pair_ratings = self.calculate_pair_ratings()
+        random.shuffle(self.pieces)  # truly test our algo
+
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(animation_file, fourcc, 1.0, (1024, 1024))
+        self.load_state()
+
+        out.write(cv2.cvtColor(self.get_animation_frame(self.pieces, 1024, number_of_pieces=5), cv2.COLOR_BGR2RGB))
+        if len(self.pieces) == 1:
+            scale_rating = self.rate_scale_with_holes(piece=self.pieces[0], scales=(2,3,4))
+            for j in range(5):
+                out.write(self.get_scale_rating_frame(self.pieces[0], scale_rating))
+        self.solve_puzzle_iteration_ver2(out=out)
+        for i in tqdm(range(10), desc='general solving'):
+            scale_rating = self.rate_scale_with_holes(piece=self.pieces[0], scales=(2, 3, 4))
+            scale_rating_frame = self.get_scale_rating_frame(self.pieces[0], scale_rating)
+            for j in range(5):
+                out.write(scale_rating_frame)
+
+            self.pieces = self.pieces[0].split_by_scale_rating(scale_rating=scale_rating)
+            self.solve_puzzle_big_pieces_first(out=out)
+
+        out.release()
+
 
     def _get_average_pair_ratings(self, new_piece_mask, new_boolean_mask):
         all_ratings = []
@@ -561,6 +661,25 @@ class Solver:
         prog_bar.close()
         return output / count
 
+    def rate_scale_with_holes(self, piece: JoinedPieces, scales=(2, 3, 4)):
+        # at the moment our method doesn't accept hole (this could be changed)
+        output = np.zeros_like(piece.piece_mask, dtype=np.float)
+        count = np.ones_like(piece.piece_mask, dtype=np.float32) * 1e-6
+        prog_bar = tqdm(desc='calculating big scale confidence', total=len(scales) * piece.piece_mask.max(), position=0,
+                        leave=True)
+        for scale in scales:
+            kernel = np.ones((scale, scale), dtype=np.uint8)
+            locations_that_can_be_tested = correlate2d(piece.piece_exists, kernel, mode='valid') > 2
+            for location in np.argwhere(locations_that_can_be_tested):
+                count[location[0], location[1]] += 1
+                output[location[0], location[1]] = output[location[0], location[1]] + self.get_validator_rating(
+                    piece.piece_mask[location[0]: location[0] + scale, location[1]: location[1] + scale]
+                )
+                prog_bar.update(1)
+
+        prog_bar.close()
+        return output / count
+
 
     def solve_puzzle_optimal_with_scale(self, animation_file='test_optimal_scale.mp4'):
         self.pair_ratings = self.calculate_pair_ratings()
@@ -607,9 +726,9 @@ class Solver:
 
 if __name__ == '__main__':
     pair_matcher = PairMatcher(model_log_path=Path('./models/fully_trained'))
-    scale_validator = ScaleValidator(model_log_path=Path('./models/scale_validator'))
+    scale_validator = ScaleValidator(model_log_path=Path('./models/scale_validator_with_holes'))
     image = Path('./data/images/test_large/nature.jpg')
 
     solver = Solver(pair_matcher=pair_matcher, scale_validator=scale_validator, image=image)
-    solver.solve_puzzle_optimal_ver2_with_random(animation_file='test_optimal_ver3_random_start.mp4')
+    solver.solve_puzzle_optimal_with_scale_validation(animation_file='test_scale_validator_new_method.mp4')
 
