@@ -9,6 +9,7 @@ from torchvision import transforms
 from typing import List
 import matplotlib.pyplot as plt
 from scipy.signal import correlate2d
+import erosion
 
 
 class TiledPairDataset(Dataset):
@@ -86,6 +87,7 @@ class TiledPairDataset(Dataset):
         final_images = [self.transforms(Image.fromarray(output_image)) for output_image in outputs]
         return torch.stack(final_images), torch.tensor(labels, dtype=torch.long)
 
+
 class SandedPairDataset(TiledPairDataset):
 
     def __init__(self, images_path: Path, sand_factor=0.25):
@@ -124,6 +126,25 @@ class SandedPairDataset(TiledPairDataset):
         sanded_patch = self.sand_patch(full_patch)
         return sanded_patch
 
+
+class ErodedPairDataset(TiledPairDataset):
+
+    def __init__(self, images_path: Path, erosion_factor=0.15):
+        super().__init__(images_path, patch_size=30)
+        self.erosion_factor = erosion_factor
+
+
+    def get_patch(self, image, patch_coords):
+        x, y = patch_coords
+        full_patch = image[y * self.patch_size: y * self.patch_size + self.patch_size,
+                       x * self.patch_size: x * self.patch_size + self.patch_size]
+
+        alpha_channel = np.ones(shape=[full_patch.shape[0], full_patch.shape[1], 1], dtype=full_patch.dtype) * 0
+        full_patch = np.concatenate([full_patch, alpha_channel], axis=2)
+        eroded_patch = erosion.erode_image(image=full_patch, noise_volume=30)
+        return eroded_patch[:, :, :3]
+
+
 class SingleImageDataset(TiledPairDataset):
     pieces: List[np.ndarray]
 
@@ -152,7 +173,7 @@ class SingleImageDataset(TiledPairDataset):
 
 if __name__ == '__main__':
     # test
-    d = SandedPairDataset(images_path=Path('./images/train'))
+    d = ErodedPairDataset(images_path=Path('./images/train'))
 
     while True:
         a = d[0]
