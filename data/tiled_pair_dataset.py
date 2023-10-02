@@ -139,7 +139,7 @@ class ErodedPairDataset(TiledPairDataset):
         full_patch = image[y * self.patch_size: y * self.patch_size + self.patch_size,
                        x * self.patch_size: x * self.patch_size + self.patch_size]
 
-        alpha_channel = np.ones(shape=[full_patch.shape[0], full_patch.shape[1], 1], dtype=full_patch.dtype) * 0
+        alpha_channel = np.ones(shape=[full_patch.shape[0], full_patch.shape[1], 1], dtype=full_patch.dtype) * 255
         full_patch = np.concatenate([full_patch, alpha_channel], axis=2)
         eroded_patch = erosion.erode_image(image=full_patch, noise_volume=30)
         return eroded_patch[:, :, :3]
