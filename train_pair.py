@@ -89,13 +89,15 @@ class PairMatcher:
         train_dataloader = DataLoader(
             TiledPairDataset(Path('./data/images/train')),
             batch_size=4,
-            shuffle=True
+            shuffle=True,
+            num_workers=16
         )
 
         test_dataloader = DataLoader(
             TiledPairDataset(Path('./data/images/test')),
             batch_size=4,
-            shuffle=True
+            shuffle=True,
+            num_workers=16
         )
 
         return train_dataloader, test_dataloader
