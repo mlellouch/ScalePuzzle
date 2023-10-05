@@ -730,6 +730,7 @@ def erode_image(image, noise_volume=0, erosion_type="reference", noise_reference
             eroded_image = np.zeros(image.shape, dtype=np.uint8)
             eroded_image[:, :, 3] = eroded_mask
             eroded_image[:, :, :3] = image[:, :, :3]
+            eroded_image[eroded_image[:, :, 3] == 0] = 0
             return eroded_image
 
     elif erosion_type == "sandstorm":

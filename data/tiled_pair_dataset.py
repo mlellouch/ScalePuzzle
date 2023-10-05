@@ -9,7 +9,6 @@ from torchvision import transforms
 from typing import List
 import matplotlib.pyplot as plt
 from scipy.signal import correlate2d
-import erosion
 
 
 class TiledPairDataset(Dataset):
@@ -87,11 +86,10 @@ class TiledPairDataset(Dataset):
         final_images = [self.transforms(Image.fromarray(output_image)) for output_image in outputs]
         return torch.stack(final_images), torch.tensor(labels, dtype=torch.long)
 
-
 class SandedPairDataset(TiledPairDataset):
 
-    def __init__(self, images_path: Path, sand_factor=0.25):
-        super().__init__(images_path, patch_size=30)
+    def __init__(self, images_path: Path, sand_factor=0.2):
+        super().__init__(images_path, patch_size=32)
         self.sand_factor = sand_factor
 
 
@@ -126,23 +124,44 @@ class SandedPairDataset(TiledPairDataset):
         sanded_patch = self.sand_patch(full_patch)
         return sanded_patch
 
+class SandedPairTestDataset(SandedPairDataset):
 
-class ErodedPairDataset(TiledPairDataset):
+    def _choose_random_image(self):
+        self.current_image = np.array(Image.open(random.choice(self.all_images)))
 
-    def __init__(self, images_path: Path, erosion_factor=0.15):
-        super().__init__(images_path, patch_size=30)
-        self.erosion_factor = erosion_factor
+    def __init__(self, images_path: Path):
+        super().__init__(images_path)
+        self._choose_random_image()
 
+    def __len__(self):
+        # calculate the number of patches
+        height_patches = self.current_image.shape[0] // self.patch_size
+        width_patches = self.current_image.shape[1] // self.patch_size
+        return height_patches * width_patches
 
-    def get_patch(self, image, patch_coords):
-        x, y = patch_coords
-        full_patch = image[y * self.patch_size: y * self.patch_size + self.patch_size,
-                       x * self.patch_size: x * self.patch_size + self.patch_size]
+    def __getitem__(self, idx):
+        height_patches = self.current_image.shape[0] // self.patch_size
+        width_patches = self.current_image.shape[1] // self.patch_size
+        middle_y, middle_x = (height_patches // 2), (width_patches // 2)
+        center_patch = self.get_patch(self.current_image, (middle_y, middle_x))
 
-        alpha_channel = np.ones(shape=[full_patch.shape[0], full_patch.shape[1], 1], dtype=full_patch.dtype) * 255
-        full_patch = np.concatenate([full_patch, alpha_channel], axis=2)
-        eroded_patch = erosion.erode_image(image=full_patch, noise_volume=30)
-        return eroded_patch[:, :, :3]
+        current_y = idx // width_patches
+        current_x = idx % width_patches
+
+        second_patch = self.get_patch(self.current_image, (current_y, current_x))
+        label = 0
+        if current_y + 1 == middle_y and current_x == middle_x:
+            label = 1
+        if current_y - 1 == middle_y and current_x == middle_x:
+            label = 2
+        if current_y == middle_y and current_x + 1 == middle_x:
+            label = 3
+        if current_y == middle_y and current_x - 1 == middle_y:
+            label = 4
+
+        outputs = [self._get_tiled_image(center_patch=center_patch, tiled_patch=second_patch)]
+        final_images = [self.transforms(Image.fromarray(output_image)) for output_image in outputs]
+        return torch.stack(final_images), torch.tensor(label, dtype=torch.long)
 
 
 class SingleImageDataset(TiledPairDataset):
@@ -173,7 +192,7 @@ class SingleImageDataset(TiledPairDataset):
 
 if __name__ == '__main__':
     # test
-    d = ErodedPairDataset(images_path=Path('./images/train'))
+    d = SandedPairDataset(images_path=Path('./images/train'))
 
     while True:
         a = d[0]
