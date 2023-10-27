@@ -3,7 +3,7 @@ import torchvision
 from pathlib import Path
 from torch.utils.data import DataLoader
 import csv
-from data.tiled_pair_dataset import TiledPairDataset
+from data.tiled_pair_dataset import TiledPairDataset, SandedPairDataset, SandedPairTestDataset
 import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
@@ -42,10 +42,12 @@ class PairMatcher:
         self.load_model()
         self.criterion = None
         self.optimizer = None
+        self.max_per_epoch = 1000
 
     def train_epoch(self, train_dataloader):
         self.net.train()
         loss_sum = 0
+        total_examples = 0
         for data in train_dataloader:
             inputs, labels = data
             # flatten
@@ -58,13 +60,23 @@ class PairMatcher:
             loss.backward()
             self.optimizer.step()
 
-        return loss_sum / len(train_dataloader)
+            total_examples += inputs.shape[0]
+            if total_examples > self.max_per_epoch:
+                break
+
+        return loss_sum / total_examples
 
     def test_epoch(self, test_dataloader):
         self.net.eval()
         loss_sum = 0
         correct = 0
         total = 0
+
+        total_not_connected = 0
+        correct_not_connected = 0
+
+        total_connected = 0
+        correct_connected = 0
         with torch.no_grad():
             for data in test_dataloader:
                 inputs, labels = data
@@ -81,7 +93,18 @@ class PairMatcher:
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
 
-        return loss_sum / len(test_dataloader), correct / total
+                for label, prediction in zip(labels.detach().cpu().tolist(), predicted.detach().cpu().tolist()):
+                    if label == 0:
+                        total_not_connected += 1
+                        if prediction == 0:
+                            correct_not_connected += 1
+
+                    else:
+                        total_connected += 1
+                        if prediction == label:
+                            correct_connected += 1
+
+        return loss_sum / len(test_dataloader), correct / total, correct_not_connected / total_not_connected, correct_connected / total_connected
 
 
     def setup_training(self):
@@ -90,15 +113,16 @@ class PairMatcher:
 
     def get_data(self):
         train_dataloader = DataLoader(
-            TiledPairDataset(Path('./data/images/train')),
+            SandedPairDataset(Path('./data/images/train')),
             batch_size=4,
-            shuffle=True
+            shuffle=True,
+            num_workers=16
         )
 
         test_dataloader = DataLoader(
-            TiledPairDataset(Path('./data/images/test')),
+            SandedPairTestDataset(Path('./data/images/test')),
             batch_size=4,
-            shuffle=True
+            shuffle=True,
         )
 
         return train_dataloader, test_dataloader
@@ -108,16 +132,18 @@ class PairMatcher:
         train_dataloader, test_dataloader = self.get_data()
 
         with open(self.model_log_path / Path('trace.csv'), 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=['epoch', 'train_loss', 'test_loss', 'test_accuracy'])
+            writer = csv.DictWriter(f, fieldnames=['epoch', 'train_loss', 'test_loss', 'test_accuracy', 'not_connected_accuracy', 'connected_accuracy'])
             writer.writeheader()
             for epoch in tqdm(range(epochs)):
                 train_loss = self.train_epoch(train_dataloader=train_dataloader)
-                test_loss, test_accuracy = self.test_epoch(test_dataloader=test_dataloader)
+                test_loss, test_accuracy, not_connected_accuracy, connected_accuracy = self.test_epoch(test_dataloader=test_dataloader)
                 writer.writerow({
                     'epoch': epoch,
                     'train_loss': train_loss,
                     'test_loss': test_loss,
-                    'test_accuracy': test_accuracy
+                    'test_accuracy': test_accuracy,
+                    'not_connected_accuracy': not_connected_accuracy,
+                    'connected_accuracy': connected_accuracy,
                 })
 
         self.save_model()
@@ -129,7 +155,7 @@ class PairMatcher:
 
 
 if __name__ == '__main__':
-    PairMatcher(model_log_path=Path('./models/first_test')).train(epochs=300)
+    PairMatcher(model_log_path=Path('./models/sanded_pair_dataset_full')).train(epochs=200)
 
 
 
