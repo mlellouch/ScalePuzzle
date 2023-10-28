@@ -3,7 +3,7 @@ import torchvision
 from pathlib import Path
 from torch.utils.data import DataLoader
 import csv
-from data.tiled_pair_dataset import TiledPairDataset, SandedPairDataset, SandedPairTestDataset
+from data.tiled_pair_dataset import TiledPairDataset, SandedPairDataset, SandedPairTestDataset, ErodedPairDataset, ErodedPairTestDataset
 import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
@@ -42,7 +42,7 @@ class PairMatcher:
         self.load_model()
         self.criterion = None
         self.optimizer = None
-        self.max_per_epoch = 1000
+        self.max_per_epoch = 500
 
     def train_epoch(self, train_dataloader):
         self.net.train()
@@ -113,14 +113,14 @@ class PairMatcher:
 
     def get_data(self):
         train_dataloader = DataLoader(
-            SandedPairDataset(Path('./data/images/train')),
+            ErodedPairDataset(Path('./data/images/train')),
             batch_size=4,
             shuffle=True,
             num_workers=16
         )
 
         test_dataloader = DataLoader(
-            SandedPairTestDataset(Path('./data/images/test')),
+            ErodedPairTestDataset(Path('./data/images/high_detail_test')),
             batch_size=4,
             shuffle=True,
         )
@@ -155,7 +155,7 @@ class PairMatcher:
 
 
 if __name__ == '__main__':
-    PairMatcher(model_log_path=Path('./models/sanded_pair_dataset_full')).train(epochs=200)
+    PairMatcher(model_log_path=Path('./models/eroded_pair_dataset_full')).train(epochs=200)
 
 
 

@@ -54,12 +54,14 @@ class TiledPairDataset(Dataset):
         return canvas
 
     def get_patch(self, image, patch_coords):
-        x, y = patch_coords
+        y, x = patch_coords
         return image[y * self.patch_size: y * self.patch_size + self.patch_size,
                        x * self.patch_size: x * self.patch_size + self.patch_size]
 
     def __getitem__(self, idx):
         image = np.array(Image.open(self.all_images[idx]))
+        if image.shape[2] == 4:
+            image = image[:, :, :3]
         chosen_y = np.random.randint(low=1, high=(image.shape[0] // self.patch_size) - 1)
         chosen_x = np.random.randint(low=1, high=(image.shape[1] // self.patch_size) - 1)
 
@@ -117,7 +119,7 @@ class SandedPairDataset(TiledPairDataset):
         return sanded_patch
 
     def get_patch(self, image, patch_coords):
-        x, y = patch_coords
+        y, x = patch_coords
         full_patch = image[y * self.patch_size: y * self.patch_size + self.patch_size,
                        x * self.patch_size: x * self.patch_size + self.patch_size]
 
@@ -163,6 +165,63 @@ class SandedPairTestDataset(SandedPairDataset):
         final_images = [self.transforms(Image.fromarray(output_image)) for output_image in outputs]
         return torch.stack(final_images), torch.tensor(label, dtype=torch.long)
 
+
+import data.erosion as erosion
+class ErodedPairDataset(TiledPairDataset):
+
+    def __init__(self, images_path: Path, erosion_volume=20):
+        super().__init__(images_path, patch_size=32)
+        self.erosion_volume = erosion_volume
+
+
+    def get_patch(self, image, patch_coords):
+        y, x = patch_coords
+        full_patch = image[y * self.patch_size: y * self.patch_size + self.patch_size,
+                       x * self.patch_size: x * self.patch_size + self.patch_size]
+
+        eroded_patch = erosion.erode_image(image=full_patch, noise_volume=self.erosion_volume)
+        return eroded_patch
+
+class ErodedPairTestDataset(ErodedPairDataset):
+
+    def _choose_random_image(self):
+        self.current_image = np.array(Image.open(random.choice(self.all_images)))
+        self.chosen_y = np.random.randint(low=1, high=(self.current_image.shape[0] // self.patch_size) - 1)
+        self.chosen_x = np.random.randint(low=1, high=(self.current_image.shape[1] // self.patch_size) - 1)
+
+    def __init__(self, images_path: Path):
+        super().__init__(images_path)
+        self._choose_random_image()
+
+    def __len__(self):
+        # calculate the number of patches
+        height_patches = self.current_image.shape[0] // self.patch_size
+        width_patches = self.current_image.shape[1] // self.patch_size
+        return height_patches * width_patches
+
+    def __getitem__(self, idx):
+        height_patches = self.current_image.shape[0] // self.patch_size
+        width_patches = self.current_image.shape[1] // self.patch_size
+
+        center_patch = self.get_patch(self.current_image, (self.chosen_y, self.chosen_x))
+
+        current_y = idx // width_patches
+        current_x = idx % width_patches
+
+        second_patch = self.get_patch(self.current_image, (current_y, current_x))
+        label = 0
+        if current_y + 1 == self.chosen_y and current_x == self.chosen_x:
+            label = 1
+        if current_y - 1 == self.chosen_y and current_x == self.chosen_x:
+            label = 2
+        if current_y == self.chosen_y and current_x + 1 == self.chosen_x:
+            label = 3
+        if current_y == self.chosen_y and current_x - 1 == self.chosen_x:
+            label = 4
+
+        outputs = [self._get_tiled_image(center_patch=center_patch, tiled_patch=second_patch)]
+        final_images = [self.transforms(Image.fromarray(output_image)) for output_image in outputs]
+        return torch.stack(final_images), torch.tensor(label, dtype=torch.long)
 
 class SingleImageDataset(TiledPairDataset):
     pieces: List[np.ndarray]

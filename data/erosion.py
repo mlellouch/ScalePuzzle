@@ -712,7 +712,8 @@ def erode_image(image, noise_volume=0, erosion_type="reference", noise_reference
     """
 
     if erosion_type == "reference":
-        contours = find_contours(image[:, :, 3], 0)
+        entire_image = np.ones(shape=[image.shape[0], image.shape[1]]) * 255
+        contours = find_contours(entire_image, 0)
         contours = [contour[:, ::-1] for contour in contours]
         if len(contours) == 0:
             contours = [np.array([[0, 0], [0, image.shape[0]], [image.shape[1], image.shape[0]], [image.shape[1], 0]])]
@@ -728,9 +729,7 @@ def erode_image(image, noise_volume=0, erosion_type="reference", noise_reference
             eroded_mask = np.zeros(image.shape[:2], dtype=np.uint8)
             cv2.fillPoly(eroded_mask, pts=[eroded_contours.astype(np.int32)], color=(255))
             eroded_image = np.zeros(image.shape, dtype=np.uint8)
-            eroded_image[:, :, 3] = eroded_mask
-            eroded_image[:, :, :3] = image[:, :, :3]
-            eroded_image[eroded_image[:, :, 3] == 0] = 0
+            eroded_image[eroded_mask > 0] = image[:, :, :3][eroded_mask > 0]
             return eroded_image
 
     elif erosion_type == "sandstorm":
